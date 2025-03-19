@@ -6,11 +6,11 @@
 #include <M5Unified.h>                       // M5Unifiedライブラリ
 // ================================== End
 
-// #define ARDUINO_M5STACK_ATOM
 #define ARDUINO_M5STACK_ATOMS3
+// #define ARDUINO_M5STACK_ATOM
 
 // ==================================
-// for LED
+// for LED (ATOM Lite)
 #ifdef ARDUINO_M5STACK_ATOM
   #include <FastLED.h>
   #define ATOM_LED_PIN  27      // ATOM Lite本体のLED用
@@ -36,11 +36,23 @@
 #include "WiFi.h"
 #include <esp_now.h>
 
-// ブロードキャスト用のアドレス
-uint8_t macAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+// ブロードキャスト用のアドレス（テスト用）
+// uint8_t macAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+// 複数のMACアドレスを定義
+uint8_t macAddresses[][6] = {
+  {0x2c, 0xbc, 0xbb, 0x82, 0xbb, 0xe0},  // Basic
+  {0x90, 0x15, 0x06, 0xfa, 0x05, 0xe8},  // AtomLite
+  {0x2c, 0xbc, 0xbb, 0x94, 0x32, 0x0c},  // Core2 AWS
+  {0x78, 0x21, 0x84, 0xaa, 0xbb, 0xa8}   // Fire
+};
+
+// 登録するデバイス数
+const int numPeers = sizeof(macAddresses) / sizeof(macAddresses[0]);
 
 // 送信データ（別の型とか構造体でもいい）
-int send_data = 1;
+// int send_data = 1;
+// ================================== End
 
 void setup() {
   // 設定用の情報を抽出
@@ -57,7 +69,7 @@ void setup() {
     M5.Lcd.init();                         // 初期化
     M5.Lcd.setTextWrap(false);             // テキストが画面からはみ出した時の折り返し無し
     M5.Lcd.setTextColor(TFT_WHITE);        // 文字色
-    M5.Lcd.fillScreen(TFT_RED);
+    M5.Lcd.fillScreen(TFT_BLACK);
   #endif
 
   #ifdef ARDUINO_M5STACK_ATOM
@@ -75,20 +87,26 @@ void setup() {
   // WiFi初期化
   WiFi.mode(WIFI_STA);
 
-  // ESP-NOWの初期化(出来なければリセットして繰り返し)
+  // ESP-NOWの初期化
   if (esp_now_init() != ESP_OK) {
+    Serial.println("Error initializing ESP-NOW");
     return;
   }
+  Serial.println("ESP-NOW Initialized");
 
-  // 送信先アドレスを設定(この場合はブロードキャストアドレス)
-  esp_now_peer_info_t peerInfo;
-  memset(&peerInfo, 0, sizeof(peerInfo));
-  memcpy(peerInfo.peer_addr, macAddress, 6);
-  if (esp_now_add_peer(&peerInfo) != ESP_OK){
-    return;
+  for (int i = 0; i < numPeers; i++) {
+    esp_now_peer_info_t peerInfo = {};
+    memcpy(peerInfo.peer_addr, macAddresses[i], 6);
+    peerInfo.channel = 0;
+    peerInfo.encrypt = false;
+
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+        Serial.printf("Failed to add peer %d\n", i);
+    } else {
+        Serial.printf("Peer %d added\n", i);
+    }
   }
 }
-// ================================== End
 
 void loop() {
 
@@ -96,22 +114,33 @@ void loop() {
 
   // === ボタンAが押されたらデータを送信 ===
   if (M5.BtnA.wasPressed()) {
-    #ifdef ARDUINO_M5STACK_ATOM
-      setLed(CRGB::Blue);
-    #endif
     #ifdef ARDUINO_M5STACK_ATOMS3
       M5.Lcd.fillScreen(TFT_GREEN);
     #endif
+    #ifdef ARDUINO_M5STACK_ATOM
+      setLed(CRGB::Green);
+    #endif
 
-    // ESP-NOW送信
-    esp_now_send(macAddress, (uint8_t *) &send_data, sizeof(send_data));
-    delay(2000);
+    // 送信データ（別の型とか構造体でもいい）
+    uint8_t sendData[1] = {1};
 
+    // 順番にESP-NOWデータ送信
+    for (int i = 0; i < numPeers; i++) {
+        esp_err_t result = esp_now_send(macAddresses[i], sendData, sizeof(sendData));
+
+        if (result == ESP_OK) {
+            Serial.printf("Data sent to Peer %d\n", i);
+        } else {
+            Serial.printf("Failed to send data to Peer %d, Error: %d\n", i, result);
+        }
+    }
+
+    delay(1000);
+    #ifdef ARDUINO_M5STACK_ATOMS3
+      M5.Lcd.fillScreen(TFT_BLACK);
+    #endif
     #ifdef ARDUINO_M5STACK_ATOM
       setLed(CRGB::Black);
-    #endif
-    #ifdef ARDUINO_M5STACK_ATOMS3
-      M5.Lcd.fillScreen(TFT_RED);
     #endif
   }
 }
